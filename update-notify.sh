@@ -16,13 +16,21 @@ STATE_DIR="/var/lib/update-notify"
 HASH_FILE="$STATE_DIR/last.hash"
 LIST_FILE="$STATE_DIR/last.list"
 MSGID_FILE="$STATE_DIR/last.msgid"
-RAW_BASE="https://raw.githubusercontent.com/Christianoooooo/linux-patch-flow/main"
+REPO="Christianoooooo/linux-patch-flow"
+RAW_BASE="https://raw.githubusercontent.com/$REPO"
 SELF=$(readlink -f "${BASH_SOURCE[0]}")
+
+remote_ref() {  # Commit-SHA von main; Rückfall auf "main", wenn die GitHub-API nicht antwortet
+  # Per SHA geladen ist der Stand sofort aktuell – der Branchname wird bis zu 5 Minuten veraltet ausgeliefert
+  local sha
+  sha=$(curl -fsSL --max-time 10 -H "Accept: application/vnd.github.sha" "https://api.github.com/repos/$REPO/commits/main" 2>/dev/null || true)
+  if [[ "$sha" =~ ^[0-9a-f]{40}$ ]]; then echo "$sha"; else echo main; fi
+}
 
 self_state() {  # gibt aktuell | veraltet | unbekannt aus (Vergleich mit GitHub main)
   local remote state
   remote=$(mktemp)
-  if ! curl -fsSL --max-time 10 "$RAW_BASE/update-notify.sh" -o "$remote" 2>/dev/null; then
+  if ! curl -fsSL --max-time 10 "$RAW_BASE/$(remote_ref)/update-notify.sh" -o "$remote" 2>/dev/null; then
     state=unbekannt
   elif cmp -s "$SELF" "$remote"; then
     state=aktuell
@@ -47,7 +55,7 @@ self_update() {
   local dir rc=0
   # Eigenes leeres Verzeichnis, damit der Installer kein lokales Repo neben sich vermutet
   dir=$(mktemp -d)
-  if curl -fsSL --max-time 30 "$RAW_BASE/install.sh" -o "$dir/install.sh"; then
+  if curl -fsSL --max-time 30 "$RAW_BASE/$(remote_ref)/install.sh" -o "$dir/install.sh"; then
     bash "$dir/install.sh" || rc=$?
   else
     echo "Download des Installers fehlgeschlagen" >&2
