@@ -44,6 +44,7 @@ Der Installer legt ab:
 | `/etc/systemd/system/update-notify.{service,timer}` | Zeitsteuerung |
 | `/etc/systemd/system/update-notify.path` | startet die Prüfung direkt nach jedem APT-Installationslauf |
 | `/var/lib/update-notify/last.{hash,list,msgid}` | Zustand der letzten Meldung |
+| `/var/lib/update-notify/installed.commit` | installierter Commit; `--update` tut nichts, wenn er dem Stand auf `main` entspricht |
 | `/usr/share/bash-completion/completions/update-notify.sh` | Tab-Vervollständigung für die Optionen |
 
 Für ein Update des Skripts `update-notify.sh --update` aufrufen oder den Installer erneut ausführen. Installer, `--update` und `--version` fragen über die GitHub-API den aktuellen Commit von `main` ab und laden die Dateien genau von dort, damit direkt nach einem Merge kein zwischengespeicherter alter Stand geliefert wird. Antwortet die API nicht (z. B. Limit von 60 Abfragen pro Stunde je IP), wird wie zuvor über den Branchnamen geladen. Gibt es eine neuere Version von update-notify, steht das als Zeile `update-notify:` in der Update-Mail.
