@@ -54,12 +54,14 @@ fetch update-notify.sh              "$TMP/update-notify.sh"
 fetch update-notify.conf.example    "$TMP/update-notify.conf.example"
 fetch systemd/update-notify.service "$TMP/update-notify.service"
 fetch systemd/update-notify.timer   "$TMP/update-notify.timer"
+fetch completion/update-notify.sh   "$TMP/update-notify.completion"
 
 bash -n "$TMP/update-notify.sh" || { echo "update-notify.sh fehlerhaft, Abbruch" >&2; exit 1; }
 
 install -m 750 "$TMP/update-notify.sh"      /usr/local/sbin/update-notify.sh
 install -m 644 "$TMP/update-notify.service" /etc/systemd/system/update-notify.service
 install -m 644 "$TMP/update-notify.timer"   /etc/systemd/system/update-notify.timer
+install -D -m 644 "$TMP/update-notify.completion" /usr/share/bash-completion/completions/update-notify.sh
 
 if [[ -e /etc/update-notify.conf ]]; then
   echo "/etc/update-notify.conf existiert bereits – bleibt unverändert."

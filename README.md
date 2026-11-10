@@ -43,6 +43,7 @@ Der Installer legt ab:
 | `/etc/update-notify.conf` | Konfiguration (nur beim ersten Mal, wird nie überschrieben) |
 | `/etc/systemd/system/update-notify.{service,timer}` | Zeitsteuerung |
 | `/var/lib/update-notify/last.{hash,list,msgid}` | Zustand der letzten Meldung |
+| `/usr/share/bash-completion/completions/update-notify.sh` | Tab-Vervollständigung für `--dry-run` und `--force` |
 
 Für ein Update des Skripts den Installer einfach erneut ausführen.
 
@@ -67,6 +68,8 @@ update-notify.sh --force     # auch bei unveränderter Liste senden
 update-notify.sh             # normaler Lauf (wie der Timer)
 journalctl -u update-notify  # Protokoll
 ```
+
+Die Optionen lassen sich mit Tab vervollständigen, wenn das Paket `bash-completion` installiert ist (`apt install bash-completion`, danach neu anmelden).
 
 ### Wann wird gemeldet?
 
