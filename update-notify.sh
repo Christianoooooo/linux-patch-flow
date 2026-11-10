@@ -118,11 +118,8 @@ has_pkg '^elasticsearch$'              && HINTS+=("Elasticsearch: Neustart, Such
 has_pkg '^zammad$'                     && HINTS+=("Zammad: Neustart inkl. Asset-Precompile (RAM-intensiv)")
 has_pkg '^openssh-server$'             && HINTS+=("OpenSSH: sshd wird neu gestartet (bestehende Sitzungen bleiben)")
 
-if (( ${#HINTS[@]} )); then
-  HINTS_TEXT=$(printf -- '- %s\n' "${HINTS[@]}")
-else
-  HINTS_TEXT="- keine bekannten Dienst-Neustarts"
-fi
+(( ${#HINTS[@]} )) || HINTS=("keine bekannten Dienst-Neustarts")
+HINTS_TEXT=$(printf -- '- %s\n' "${HINTS[@]}")
 
 SUBJECT="$SUBJECT_PREFIX $HOST_LABEL: $TOTAL Updates verfügbar"
 (( SEC_COUNT > 0 )) && SUBJECT+=" ($SEC_COUNT Sicherheit)"
@@ -142,18 +139,27 @@ TABLE=$(
       END { for (r=1; r<=n; r++) { line=""; for (i=1; i<=nf; i++) line = line sprintf("%-" w[i]+2 "s", cell[r,i]); sub(/ +$/, "", line); print line } }'
 )
 
+INFO=(
+  "Host|$(hostname -f 2>/dev/null || hostname)"
+  "IP|${IPS:--}"
+  "System|$OS_NAME"
+  "Kernel|$KERNEL"
+  "Geprüft am|$NOW"
+  "Updates|$TOTAL, davon $SEC_COUNT Sicherheitsupdates"
+  "Neustart|$( (( REBOOT_REQUIRED )) && echo "bereits ausstehend (vor diesen Updates)" || echo "derzeit nicht ausstehend")"
+  "Nach Update|Neustart ${REBOOT_AFTER:-nicht nötig}"
+  "Gesperrt|${HELD:-keine}"
+)
+# printf füllt nach Bytes auf; ${#label} zählt unter C.UTF-8 Zeichen, sonst verschieben Umlaute die Spalte
+INFO_TEXT=$(LC_ALL=C.UTF-8; for row in "${INFO[@]}"; do
+  label="${row%%|*}:"
+  printf '%s%*s%s\n' "$label" $(( 15 - ${#label} )) "" "${row#*|}"
+done)
+
 BODY=$(cat <<EOF
 Auf $HOST_LABEL sind Updates verfügbar.
 
-Host:          $(hostname -f 2>/dev/null || hostname)
-IP:            ${IPS:--}
-System:        $OS_NAME
-Kernel:        $KERNEL
-Geprüft am:    $NOW
-Updates:       $TOTAL, davon $SEC_COUNT Sicherheitsupdates
-Neustart:      $( (( REBOOT_REQUIRED )) && echo "bereits ausstehend (vor diesen Updates)" || echo "derzeit nicht ausstehend")
-Nach Update:   Neustart ${REBOOT_AFTER:-nicht nötig}
-Gesperrt:      ${HELD:-keine}
+$INFO_TEXT
 
 Auswirkungen beim Update:
 $HINTS_TEXT
@@ -165,10 +171,49 @@ Automatische Meldung von update-notify auf $HOST_LABEL
 EOF
 )
 
+# --- HTML-Fassung (Ticketsysteme zeigen Text in Proportionalschrift, dort verrutschen die Spalten) ---
+html_escape() { sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'; }
+
+FONT="font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#222222"
+MONO="font-family:Consolas,Menlo,monospace;font-size:13px"
+CELL="padding:5px 16px 5px 0;border-bottom:1px solid #dddddd;text-align:left;vertical-align:top"
+HEAD="padding:5px 16px 5px 0;border-bottom:2px solid #999999;text-align:left"
+
+INFO_HTML=$(for row in "${INFO[@]}"; do
+  printf '<tr><td style="padding:2px 16px 2px 0;color:#666666">%s</td><td style="padding:2px 0">%s</td></tr>\n' \
+    "$(html_escape <<< "${row%%|*}")" "$(html_escape <<< "${row#*|}")"
+done)
+HINTS_HTML=$(printf '%s\n' "${HINTS[@]}" | html_escape | sed 's|.*|<li>&</li>|')
+TABLE_HTML=$(printf '%s\n' "${UPDATES[@]}" | html_escape | awk -F'|' -v cell="$CELL" -v mono="$MONO" '{
+  sec = ($5=="S") ? "<b style=\"color:#b3261e\">Sicherheit</b>" : ""
+  printf "<tr><td style=\"%s\">%s</td><td style=\"%s;%s\">%s</td><td style=\"%s;%s\">%s</td><td style=\"%s\">%s</td></tr>\n", cell, $1, cell, mono, $2, cell, mono, $3, cell, sec
+}')
+
+BODY_HTML=$(cat <<EOF
+<html><body style="$FONT">
+<p style="font-size:16px"><b>Auf $(html_escape <<< "$HOST_LABEL") sind $TOTAL Updates verfügbar</b>, davon $SEC_COUNT Sicherheitsupdates.</p>
+<table cellspacing="0" cellpadding="0" style="$FONT;border-collapse:collapse">
+$INFO_HTML
+</table>
+<p><b>Auswirkungen beim Update</b></p>
+<ul>
+$HINTS_HTML
+</ul>
+<p><b>Pakete</b></p>
+<table cellspacing="0" cellpadding="0" style="$FONT;border-collapse:collapse">
+<tr><th style="$HEAD">Paket</th><th style="$HEAD">Installiert</th><th style="$HEAD">Neu</th><th style="$HEAD">Art</th></tr>
+$TABLE_HTML
+</table>
+<p style="color:#888888;font-size:12px">Automatische Meldung von update-notify auf $(html_escape <<< "$HOST_LABEL")</p>
+</body></html>
+EOF
+)
+
 encode_subject() {
   printf '=?UTF-8?B?%s?=' "$(printf '%s' "$1" | base64 -w0)"
 }
 
+BOUNDARY="=_update-notify_$(date +%s)_$RANDOM"
 MAIL_FILE=$(mktemp)
 trap 'rm -f "$MAIL_FILE"' EXIT
 
@@ -182,10 +227,21 @@ trap 'rm -f "$MAIL_FILE"' EXIT
   echo "X-Update-Notify-Count: $TOTAL"
   echo "X-Update-Notify-Security: $SEC_COUNT"
   echo "MIME-Version: 1.0"
+  echo "Content-Type: multipart/alternative; boundary=\"$BOUNDARY\""
+  echo
+  echo "--$BOUNDARY"
   echo "Content-Type: text/plain; charset=UTF-8"
   echo "Content-Transfer-Encoding: 8bit"
   echo
   echo "$BODY"
+  echo
+  echo "--$BOUNDARY"
+  echo "Content-Type: text/html; charset=UTF-8"
+  echo "Content-Transfer-Encoding: 8bit"
+  echo
+  echo "$BODY_HTML"
+  echo
+  echo "--$BOUNDARY--"
 } > "$MAIL_FILE"
 
 if (( DRY_RUN )); then
