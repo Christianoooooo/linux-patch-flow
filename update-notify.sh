@@ -97,6 +97,19 @@ chmod 700 "$STATE_DIR"
 export DEBIAN_FRONTEND=noninteractive
 export LC_ALL=C
 
+# --- Laufenden APT-Vorgang abwarten ---------------------------------------------
+# Mitten im Lauf ist der Paketstand unvollständig; update-notify.path löst schon beim Start von APT aus
+WAITED=0
+while pgrep -x 'apt|apt-get|aptitude|dpkg' >/dev/null; do
+  if (( WAITED >= 1800 )); then
+    echo "APT läuft seit über 30 Minuten – Abbruch, der nächste Lauf prüft erneut" >&2
+    exit 1
+  fi
+  (( WAITED == 0 )) && echo "Warte auf laufenden APT-Vorgang ..."
+  sleep 5
+  WAITED=$(( WAITED + 5 ))
+done
+
 # --- Paketquellen aktualisieren -----------------------------------------------
 if ! apt_err=$(apt-get update -qq 2>&1); then
   echo "apt-get update fehlgeschlagen:" >&2
@@ -106,8 +119,13 @@ fi
 
 # --- Verfügbare Updates ermitteln (Simulation, ändert nichts) -----------------
 # Format der Zeilen: Inst paket [altversion] (neuversion quelle [arch])
+# Ein Fehler darf nicht als "keine Updates" gelten, sonst ginge fälschlich die Installationsmeldung raus
+if ! SIM=$(apt-get -s -o Debug::NoLocking=1 dist-upgrade 2>&1); then
+  echo "Simulation der Updates fehlgeschlagen:" >&2
+  echo "$SIM" >&2
+  exit 1
+fi
 mapfile -t UPDATES < <(
-  apt-get -s -o Debug::NoLocking=1 dist-upgrade 2>/dev/null |
   awk '/^Inst / {
          pkg=$2
          old="-"
@@ -116,7 +134,7 @@ mapfile -t UPDATES < <(
          src=$(rest+1)
          sec = (src ~ /security/) ? "S" : ""
          printf "%s|%s|%s|%s|%s\n", pkg, old, new, src, sec
-       }' | sort
+       }' <<< "$SIM" | sort
 )
 
 REBOOT_REQUIRED=0
