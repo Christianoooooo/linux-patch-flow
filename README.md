@@ -83,6 +83,7 @@ Die Optionen lassen sich mit Tab vervollständigen. Hat der Installer `bash-comp
 | Dieselben Updates wie bei der letzten Meldung | nein |
 | Neues Update oder neuere Version eines Pakets | ja, mit der vollständigen Liste |
 | Teil der Updates installiert, Rest offen | ja, mit dem Rest |
+| Gemeldetes Paket gesperrt (`apt-mark hold`), Rest installiert | ja, „Updates teilweise installiert“; sobald das gesperrte Paket installiert ist, folgt „Updates installiert“ |
 | Alle gemeldeten Updates installiert | ja, „Updates installiert“ mit den Paketen und Versionen vorher/jetzt |
 | Keine Updates, ohne dass sich eine Version geändert hat (z. B. Update zurückgezogen) | nein, Zustand wird zurückgesetzt |
 | Versand fehlgeschlagen | erneuter Versuch beim nächsten Lauf |
