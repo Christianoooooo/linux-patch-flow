@@ -97,6 +97,8 @@ IPS=$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{ for (i=1; i<NF; i++) if ($i==
 [[ -z "$IPS" ]] && IPS=$(hostname -I 2>/dev/null | awk '{print $1}' || true)
 NOW=$(date '+%d.%m.%Y %H:%M')
 
+plural() { if (( $1 == 1 )); then echo "$1 $2"; else echo "$1 $3"; fi; }  # plural <anzahl> <einzahl> <mehrzahl>
+
 html_escape() { sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'; }
 
 FONT="font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#222222"
@@ -231,7 +233,7 @@ if (( ${#UPDATES[@]} == 0 )); then
       "System|$OS_NAME"
       "Kernel|$KERNEL"
       "Geprüft am|$NOW"
-      "Installiert|${#DONE[@]} Pakete, keine Updates mehr offen"
+      "Installiert|$(plural ${#DONE[@]} Paket Pakete), keine Updates mehr offen"
       "Neustart|$( (( REBOOT_REQUIRED )) && echo "ausstehend" || echo "nicht ausstehend")"
     )
     BODY=$(cat <<EOF
@@ -306,7 +308,7 @@ has_pkg '^openssh-server$'             && HINTS+=("OpenSSH: sshd wird neu gestar
 (( ${#HINTS[@]} )) || HINTS=("keine bekannten Dienst-Neustarts")
 HINTS_TEXT=$(printf -- '- %s\n' "${HINTS[@]}")
 
-SUBJECT="$SUBJECT_PREFIX $HOST_LABEL: $TOTAL Updates verfügbar"
+SUBJECT="$SUBJECT_PREFIX $HOST_LABEL: $(plural "$TOTAL" Update Updates) verfügbar"
 (( SEC_COUNT > 0 )) && SUBJECT+=" ($SEC_COUNT Sicherheit)"
 if (( REBOOT_REQUIRED )); then
   SUBJECT+=" – Neustart ausstehend"
@@ -320,7 +322,7 @@ INFO=(
   "System|$OS_NAME"
   "Kernel|$KERNEL"
   "Geprüft am|$NOW"
-  "Updates|$TOTAL, davon $SEC_COUNT Sicherheitsupdates"
+  "Updates|$TOTAL, davon $(plural "$SEC_COUNT" Sicherheitsupdate Sicherheitsupdates)"
   "Neustart|$( (( REBOOT_REQUIRED )) && echo "bereits ausstehend (vor diesen Updates)" || echo "derzeit nicht ausstehend")"
   "Nach Update|Neustart ${REBOOT_AFTER:-nicht nötig}"
   "Gesperrt|${HELD:-keine}"
@@ -345,7 +347,7 @@ EOF
 
 BODY_HTML=$(cat <<EOF
 <html><body style="$FONT">
-<p style="font-size:16px"><b>Auf $(html_escape <<< "$HOST_LABEL") sind $TOTAL Updates verfügbar</b>, davon $SEC_COUNT Sicherheitsupdates.</p>
+<p style="font-size:16px"><b>Auf $(html_escape <<< "$HOST_LABEL") $( (( TOTAL == 1 )) && echo ist || echo sind) $(plural "$TOTAL" Update Updates) verfügbar</b>, davon $(plural "$SEC_COUNT" Sicherheitsupdate Sicherheitsupdates).</p>
 $(info_html)
 <p><b>Auswirkungen beim Update</b></p>
 <ul>
