@@ -52,7 +52,17 @@ fetch() {  # fetch <pfad im repo> <ziel>
 if [[ -n "$SRC_DIR" ]]; then
   echo "Installiere aus lokalem Repo: $SRC_DIR"
 else
-  echo "Installiere aus GitHub: $REPO ($BRANCH)"
+  # Commit-SHA statt Branchname: der Branch wird von raw.githubusercontent.com bis zu 5 Minuten veraltet ausgeliefert
+  auth=()
+  [[ -n "${GITHUB_TOKEN:-}" ]] && auth=(-H "Authorization: token $GITHUB_TOKEN")
+  sha=$(curl -fsSL --max-time 10 "${auth[@]}" -H "Accept: application/vnd.github.sha" \
+    "https://api.github.com/repos/$REPO/commits/$BRANCH" 2>/dev/null || true)
+  if [[ "$sha" =~ ^[0-9a-f]{40}$ ]]; then
+    RAW_BASE="https://raw.githubusercontent.com/$REPO/$sha"
+    echo "Installiere aus GitHub: $REPO ($BRANCH, Commit ${sha:0:7})"
+  else
+    echo "Installiere aus GitHub: $REPO ($BRANCH)"
+  fi
 fi
 
 fetch update-notify.sh              "$TMP/update-notify.sh"
