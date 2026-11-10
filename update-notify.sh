@@ -6,6 +6,7 @@
 # Aufruf:  update-notify.sh            normaler Lauf (Timer)
 #          update-notify.sh --force    meldet auch bei unveränderter Liste
 #          update-notify.sh --dry-run  zeigt die Mail nur an, sendet nichts, speichert keinen Zustand
+#          update-notify.sh --version  zeigt den installierten Stand und vergleicht ihn mit GitHub (main)
 
 set -euo pipefail
 
@@ -14,6 +15,22 @@ STATE_DIR="/var/lib/update-notify"
 HASH_FILE="$STATE_DIR/last.hash"
 LIST_FILE="$STATE_DIR/last.list"
 MSGID_FILE="$STATE_DIR/last.msgid"
+RAW_URL="https://raw.githubusercontent.com/Christianoooooo/linux-patch-flow/main/update-notify.sh"
+
+show_version() {
+  local self remote
+  self=$(readlink -f "${BASH_SOURCE[0]}")
+  echo "update-notify $(sha256sum "$self" | cut -c1-12), installiert am $(date -r "$self" '+%d.%m.%Y %H:%M')"
+  remote=$(mktemp)
+  if ! curl -fsSL --max-time 10 "$RAW_URL" -o "$remote" 2>/dev/null; then
+    echo "Vergleich mit GitHub nicht möglich (keine Verbindung)."
+  elif cmp -s "$self" "$remote"; then
+    echo "Aktuell – entspricht dem Stand auf GitHub (main)."
+  else
+    echo "Veraltet – auf GitHub (main) liegt ein anderer Stand. Zum Aktualisieren den Installer erneut ausführen."
+  fi
+  rm -f "$remote"
+}
 
 FORCE=0
 DRY_RUN=0
@@ -21,6 +38,7 @@ for arg in "$@"; do
   case "$arg" in
     --force)   FORCE=1 ;;
     --dry-run) DRY_RUN=1 ;;
+    --version) show_version; exit 0 ;;
     *) echo "Unbekannte Option: $arg" >&2; exit 2 ;;
   esac
 done

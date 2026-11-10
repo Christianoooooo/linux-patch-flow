@@ -43,7 +43,7 @@ Der Installer legt ab:
 | `/etc/update-notify.conf` | Konfiguration (nur beim ersten Mal, wird nie überschrieben) |
 | `/etc/systemd/system/update-notify.{service,timer}` | Zeitsteuerung |
 | `/var/lib/update-notify/last.{hash,list,msgid}` | Zustand der letzten Meldung |
-| `/usr/share/bash-completion/completions/update-notify.sh` | Tab-Vervollständigung für `--dry-run` und `--force` |
+| `/usr/share/bash-completion/completions/update-notify.sh` | Tab-Vervollständigung für die Optionen |
 
 Für ein Update des Skripts den Installer einfach erneut ausführen.
 
@@ -65,6 +65,7 @@ Für ein Update des Skripts den Installer einfach erneut ausführen.
 ```bash
 update-notify.sh --dry-run   # Mail anzeigen, nichts senden, Zustand nicht ändern
 update-notify.sh --force     # auch bei unveränderter Liste senden
+update-notify.sh --version   # installierten Stand anzeigen und mit GitHub (main) vergleichen
 update-notify.sh             # normaler Lauf (wie der Timer)
 journalctl -u update-notify  # Protokoll
 ```
