@@ -46,7 +46,7 @@ Der Installer legt ab:
 | `/var/lib/update-notify/last.{hash,list,msgid}` | Zustand der letzten Meldung |
 | `/usr/share/bash-completion/completions/update-notify.sh` | Tab-Vervollständigung für die Optionen |
 
-Für ein Update des Skripts den Installer einfach erneut ausführen.
+Für ein Update des Skripts `update-notify.sh --update` aufrufen oder den Installer erneut ausführen. Gibt es eine neuere Version von update-notify, steht das als Zeile `update-notify:` in der Update-Mail.
 
 ### Konfiguration
 
@@ -67,6 +67,7 @@ Für ein Update des Skripts den Installer einfach erneut ausführen.
 update-notify.sh --dry-run   # Mail anzeigen, nichts senden, Zustand nicht ändern
 update-notify.sh --force     # auch bei unveränderter Liste senden
 update-notify.sh --version   # installierten Stand anzeigen und mit GitHub (main) vergleichen
+update-notify.sh --update    # update-notify selbst aktualisieren (führt den Installer von GitHub aus)
 update-notify.sh             # normaler Lauf (wie der Timer)
 journalctl -u update-notify  # Protokoll
 ```

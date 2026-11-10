@@ -7,6 +7,7 @@
 #          update-notify.sh --force    meldet auch bei unveränderter Liste
 #          update-notify.sh --dry-run  zeigt die Mail nur an, sendet nichts, speichert keinen Zustand
 #          update-notify.sh --version  zeigt den installierten Stand und vergleicht ihn mit GitHub (main)
+#          update-notify.sh --update   aktualisiert update-notify über den Installer von GitHub (main)
 
 set -euo pipefail
 
@@ -15,21 +16,45 @@ STATE_DIR="/var/lib/update-notify"
 HASH_FILE="$STATE_DIR/last.hash"
 LIST_FILE="$STATE_DIR/last.list"
 MSGID_FILE="$STATE_DIR/last.msgid"
-RAW_URL="https://raw.githubusercontent.com/Christianoooooo/linux-patch-flow/main/update-notify.sh"
+RAW_BASE="https://raw.githubusercontent.com/Christianoooooo/linux-patch-flow/main"
+SELF=$(readlink -f "${BASH_SOURCE[0]}")
 
-show_version() {
-  local self remote
-  self=$(readlink -f "${BASH_SOURCE[0]}")
-  echo "update-notify $(sha256sum "$self" | cut -c1-12), installiert am $(date -r "$self" '+%d.%m.%Y %H:%M')"
+self_state() {  # gibt aktuell | veraltet | unbekannt aus (Vergleich mit GitHub main)
+  local remote state
   remote=$(mktemp)
-  if ! curl -fsSL --max-time 10 "$RAW_URL" -o "$remote" 2>/dev/null; then
-    echo "Vergleich mit GitHub nicht möglich (keine Verbindung)."
-  elif cmp -s "$self" "$remote"; then
-    echo "Aktuell – entspricht dem Stand auf GitHub (main)."
+  if ! curl -fsSL --max-time 10 "$RAW_BASE/update-notify.sh" -o "$remote" 2>/dev/null; then
+    state=unbekannt
+  elif cmp -s "$SELF" "$remote"; then
+    state=aktuell
   else
-    echo "Veraltet – auf GitHub (main) liegt ein anderer Stand. Zum Aktualisieren den Installer erneut ausführen."
+    state=veraltet
   fi
   rm -f "$remote"
+  echo "$state"
+}
+
+show_version() {
+  echo "update-notify $(sha256sum "$SELF" | cut -c1-12), installiert am $(date -r "$SELF" '+%d.%m.%Y %H:%M')"
+  case "$(self_state)" in
+    aktuell)  echo "Aktuell – entspricht dem Stand auf GitHub (main)." ;;
+    veraltet) echo "Veraltet – auf GitHub (main) liegt ein anderer Stand. Aktualisieren mit: update-notify.sh --update" ;;
+    *)        echo "Vergleich mit GitHub nicht möglich (keine Verbindung)." ;;
+  esac
+}
+
+self_update() {
+  [[ $EUID -eq 0 ]] || { echo "Bitte als root ausführen" >&2; exit 1; }
+  local dir rc=0
+  # Eigenes leeres Verzeichnis, damit der Installer kein lokales Repo neben sich vermutet
+  dir=$(mktemp -d)
+  if curl -fsSL --max-time 30 "$RAW_BASE/install.sh" -o "$dir/install.sh"; then
+    bash "$dir/install.sh" || rc=$?
+  else
+    echo "Download des Installers fehlgeschlagen" >&2
+    rc=1
+  fi
+  rm -rf "$dir"
+  exit "$rc"
 }
 
 FORCE=0
@@ -39,6 +64,7 @@ for arg in "$@"; do
     --force)   FORCE=1 ;;
     --dry-run) DRY_RUN=1 ;;
     --version) show_version; exit 0 ;;
+    --update)  self_update ;;
     *) echo "Unbekannte Option: $arg" >&2; exit 2 ;;
   esac
 done
@@ -327,6 +353,9 @@ INFO=(
   "Nach Update|Neustart ${REBOOT_AFTER:-nicht nötig}"
   "Gesperrt|${HELD:-keine}"
 )
+if [[ "$(self_state)" == veraltet ]]; then
+  INFO+=("update-notify|neue Version verfügbar – einspielen mit: update-notify.sh --update")
+fi
 
 BODY=$(cat <<EOF
 Auf $HOST_LABEL sind Updates verfügbar.
