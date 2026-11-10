@@ -1,0 +1,9 @@
+[Unit]
+Description=Nach APT-Installationen sofort auf Updates prüfen
+
+[Path]
+# APT schreibt und schließt history.log am Ende jedes Installationslaufs
+PathChanged=/var/log/apt/history.log
+
+[Install]
+WantedBy=paths.target
