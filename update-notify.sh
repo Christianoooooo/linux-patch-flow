@@ -106,7 +106,7 @@ export LC_ALL=C
 # --- Laufenden APT-Vorgang abwarten ---------------------------------------------
 # Mitten im Lauf ist der Paketstand unvollständig; update-notify.path löst schon beim Start von APT aus
 WAITED=0
-while pgrep -x 'apt|apt-get|aptitude|dpkg' >/dev/null; do
+while pgrep -x 'apt|apt-get|aptitude|dpkg' >/dev/null 2>&1; do
   if (( WAITED >= 1800 )); then
     echo "APT läuft seit über 30 Minuten – Abbruch, der nächste Lauf prüft erneut" >&2
     exit 1
@@ -270,12 +270,22 @@ send_mail() {  # nutzt SUBJECT, BODY, BODY_HTML, TOTAL, SEC_COUNT, optional REPL
 
 # --- Keine Updates mehr offen: ggf. Installation melden --------------------------
 if (( ${#UPDATES[@]} == 0 )); then
-  # Nur Pakete mit geänderter Version zählen – zurückgezogene oder gesperrte Updates sind nicht installiert
+  # Nur Pakete mit geänderter Version zählen – zurückgezogene Updates sind nicht installiert
+  # Gesperrte Pakete (hold) bietet APT nicht an; sie bleiben offen, bis sie installiert sind
+  HOLDS=$(apt-mark showhold 2>/dev/null || true)
   DONE=()
+  OPEN=()
+  OPEN_NAMES=()
   if [[ -r "$LIST_FILE" ]]; then
-    while IFS='|' read -r pkg old _; do
+    while IFS= read -r line; do
+      IFS='|' read -r pkg old _ <<< "$line"
       cur=$(dpkg-query -W -f='${Version}\n' "$pkg" 2>/dev/null | head -n1 || true)
-      if [[ "${cur:--}" != "$old" ]]; then DONE+=("$pkg|$old|${cur:--}"); fi
+      if [[ "${cur:--}" != "$old" ]]; then
+        DONE+=("$pkg|$old|${cur:--}")
+      elif grep -qxF -- "$pkg" <<< "$HOLDS"; then
+        OPEN+=("$line")
+        OPEN_NAMES+=("$pkg")
+      fi
     done < "$LIST_FILE"
   fi
 
@@ -283,7 +293,15 @@ if (( ${#UPDATES[@]} == 0 )); then
     TOTAL=0
     SEC_COUNT=0
     REPLY_TO=$(cat "$MSGID_FILE" 2>/dev/null || true)
-    SUBJECT="$SUBJECT_PREFIX $HOST_LABEL: Updates installiert"
+    if (( ${#OPEN[@]} )); then
+      SUBJECT="$SUBJECT_PREFIX $HOST_LABEL: Updates teilweise installiert"
+      HEADLINE="Auf $HOST_LABEL wurde ein Teil der gemeldeten Updates installiert."
+      REST="$(plural ${#OPEN[@]} "gesperrtes Paket" "gesperrte Pakete") noch offen"
+    else
+      SUBJECT="$SUBJECT_PREFIX $HOST_LABEL: Updates installiert"
+      HEADLINE="Auf $HOST_LABEL wurden die gemeldeten Updates installiert."
+      REST="keine Updates mehr offen"
+    fi
     if (( REBOOT_REQUIRED )); then SUBJECT+=" – Neustart ausstehend"; fi
     INFO=(
       "Host|$FQDN"
@@ -291,11 +309,12 @@ if (( ${#UPDATES[@]} == 0 )); then
       "System|$OS_NAME"
       "Kernel|$KERNEL"
       "Geprüft am|$NOW"
-      "Installiert|$(plural ${#DONE[@]} Paket Pakete), keine Updates mehr offen"
+      "Installiert|$(plural ${#DONE[@]} Paket Pakete), $REST"
       "Neustart|$( (( REBOOT_REQUIRED )) && echo "ausstehend" || echo "nicht ausstehend")"
     )
+    if (( ${#OPEN[@]} )); then INFO+=("Gesperrt|${OPEN_NAMES[*]}"); fi
     BODY=$(cat <<EOF
-Auf $HOST_LABEL wurden die gemeldeten Updates installiert.
+$HEADLINE
 
 $(info_text)
 
@@ -307,7 +326,7 @@ EOF
 )
     BODY_HTML=$(cat <<EOF
 <html><body style="$FONT">
-<p style="font-size:16px"><b>Auf $(html_escape <<< "$HOST_LABEL") wurden die gemeldeten Updates installiert.</b></p>
+<p style="font-size:16px"><b>$(html_escape <<< "$HEADLINE")</b></p>
 $(info_html)
 <p><b>Pakete</b></p>
 $({ echo "Paket|Vorher|Jetzt"; printf '%s\n' "${DONE[@]}"; } | html_escape | html_table)
@@ -317,6 +336,12 @@ EOF
 )
     send_mail
     (( DRY_RUN )) || echo "Gemeldet: $SUBJECT"
+  fi
+
+  if (( ${#OPEN[@]} )); then
+    (( DRY_RUN )) || printf '%s\n' "${OPEN[@]}" > "$LIST_FILE"
+    echo "Keine installierbaren Updates; gesperrt und noch offen: ${OPEN_NAMES[*]}"
+    exit 0
   fi
 
   # Zustand zurücksetzen, damit neue Updates wieder gemeldet werden
