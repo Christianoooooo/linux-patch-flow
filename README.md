@@ -12,12 +12,13 @@ Patch-Management für Debian-Server über das Ticketsystem: Verfügbare Updates 
 
 Ein systemd-Timer prüft werktags um 06:30 (± 30 min), ob APT-Updates anstehen, und schickt eine Mail per SMTP, zum Beispiel an das Postfach des Ticketsystems.
 
-- Reines Bash, benötigt nur `curl` (installiert der Installer bei Bedarf)
+- Reines Bash, benötigt nur `curl` (installiert der Installer bei Bedarf, ebenso `bash-completion` für die Tab-Vervollständigung)
 - Installiert nichts: die Prüfung läuft per `apt-get -s dist-upgrade` (Simulation)
 - Meldet nur, wenn sich die Liste der Updates seit der letzten Meldung **geändert** hat, also kein tägliches Ticket mit demselben Inhalt
 - Erkennt Sicherheitsupdates (Quelle `*-security`)
 - Weist aus, ob nach dem Update ein Neustart nötig ist (Kernel) oder empfohlen wird (libc6, systemd, dbus, OpenSSL)
 - Weist aus, welche Dienste beim Update neu starten (Docker, nginx, Apache, MariaDB/MySQL, PostgreSQL, Elasticsearch, Zammad, OpenSSH)
+- Meldet sich noch einmal, sobald die gemeldeten Updates installiert sind
 
 ### Installation
 
@@ -41,7 +42,8 @@ Der Installer legt ab:
 | `/usr/local/sbin/update-notify.sh` | Skript |
 | `/etc/update-notify.conf` | Konfiguration (nur beim ersten Mal, wird nie überschrieben) |
 | `/etc/systemd/system/update-notify.{service,timer}` | Zeitsteuerung |
-| `/var/lib/update-notify/last.hash` | Zustand der letzten Meldung |
+| `/var/lib/update-notify/last.{hash,list,msgid}` | Zustand der letzten Meldung |
+| `/usr/share/bash-completion/completions/update-notify.sh` | Tab-Vervollständigung für `--dry-run` und `--force` |
 
 Für ein Update des Skripts den Installer einfach erneut ausführen.
 
@@ -67,6 +69,8 @@ update-notify.sh             # normaler Lauf (wie der Timer)
 journalctl -u update-notify  # Protokoll
 ```
 
+Die Optionen lassen sich mit Tab vervollständigen. Hat der Installer `bash-completion` gerade erst installiert, wirkt das nach einer neuen Anmeldung.
+
 ### Wann wird gemeldet?
 
 | Situation | Mail? |
@@ -75,7 +79,8 @@ journalctl -u update-notify  # Protokoll
 | Dieselben Updates wie bei der letzten Meldung | nein |
 | Neues Update oder neuere Version eines Pakets | ja, mit der vollständigen Liste |
 | Teil der Updates installiert, Rest offen | ja, mit dem Rest |
-| Keine Updates | nein, Zustand wird zurückgesetzt |
+| Alle gemeldeten Updates installiert | ja, „Updates installiert“ mit den Paketen und Versionen vorher/jetzt |
+| Keine Updates, ohne dass sich eine Version geändert hat (z. B. Update zurückgezogen) | nein, Zustand wird zurückgesetzt |
 | Versand fehlgeschlagen | erneuter Versuch beim nächsten Lauf |
 
 ### Beispielmail
@@ -108,7 +113,30 @@ linux-image-amd64                 6.12.113-1                   6.12.116-1       
 
 Die Mail wird als `multipart/alternative` verschickt: Neben der Textfassung oben enthält sie eine HTML-Fassung mit echten Tabellen, damit die Spalten auch im Ticketsystem (Proportionalschrift) sauber ausgerichtet sind. Sicherheitsupdates sind dort farblich markiert.
 
-Zusätzlich setzt die Mail die Header `X-Update-Notify-Host`, `X-Update-Notify-Count` und `X-Update-Notify-Security` für Filter im Ticketsystem.
+### Meldung nach der Installation
+
+Sind beim nächsten Lauf keine Updates mehr offen und haben sich Versionen der gemeldeten Pakete geändert, geht eine zweite Mail raus:
+
+```
+Betreff: [Linux-Updates] grov81: Updates installiert – Neustart ausstehend
+
+Auf grov81 wurden die gemeldeten Updates installiert.
+
+Host:          grov81.example.local
+...
+Installiert:   14 Pakete, keine Updates mehr offen
+Neustart:      ausstehend
+
+Paket              Vorher      Jetzt
+-----              ------      -----
+apt                3.0.3       3.0.4
+linux-image-amd64  6.12.113-1  6.12.116-1
+...
+```
+
+Die Mail kommt mit dem nächsten Timer-Lauf. Wer sie sofort möchte, ruft nach dem Einspielen `update-notify.sh` von Hand auf. Sie verweist per `In-Reply-To`/`References` auf die ursprüngliche Meldung, damit das Ticketsystem sie demselben Ticket zuordnen kann (in Zammad muss dafür die Follow-up-Erkennung über References aktiv sein).
+
+Zusätzlich setzen beide Mails die Header `X-Update-Notify-Host`, `X-Update-Notify-Count` und `X-Update-Notify-Security` für Filter im Ticketsystem (bei der Installationsmeldung jeweils `0`).
 
 ### Zeitplan ändern
 

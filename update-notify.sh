@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # update-notify.sh – meldet verfügbare APT-Updates per SMTP an Zammad
-# Meldet nur, wenn sich die Liste der verfügbaren Updates seit der letzten Meldung geändert hat.
+# Meldet nur, wenn sich die Liste der verfügbaren Updates seit der letzten Meldung geändert hat,
+# und noch einmal, sobald die gemeldeten Updates installiert sind.
 #
 # Aufruf:  update-notify.sh            normaler Lauf (Timer)
 #          update-notify.sh --force    meldet auch bei unveränderter Liste
@@ -11,6 +12,8 @@ set -euo pipefail
 CONF="/etc/update-notify.conf"
 STATE_DIR="/var/lib/update-notify"
 HASH_FILE="$STATE_DIR/last.hash"
+LIST_FILE="$STATE_DIR/last.list"
+MSGID_FILE="$STATE_DIR/last.msgid"
 
 FORCE=0
 DRY_RUN=0
@@ -67,9 +70,179 @@ mapfile -t UPDATES < <(
 REBOOT_REQUIRED=0
 [[ -f /var/run/reboot-required ]] && REBOOT_REQUIRED=1
 
+# --- Gemeinsame Bausteine für beide Meldungen -----------------------------------
+FQDN=$(hostname -f 2>/dev/null || hostname)
+OS_NAME=$(. /etc/os-release && echo "${PRETTY_NAME:-unbekannt}")
+KERNEL=$(uname -r)
+# Nur die IP der Schnittstelle mit Default-Route (keine Docker-/Bridge-Adressen)
+IPS=$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{ for (i=1; i<NF; i++) if ($i=="src") { print $(i+1); exit } }' || true)
+[[ -z "$IPS" ]] && IPS=$(hostname -I 2>/dev/null | awk '{print $1}' || true)
+NOW=$(date '+%d.%m.%Y %H:%M')
+
+html_escape() { sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'; }
+
+FONT="font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#222222"
+MONO="font-family:Consolas,Menlo,monospace;font-size:13px"
+CELL="padding:5px 16px 5px 0;border-bottom:1px solid #dddddd;text-align:left;vertical-align:top"
+HEAD="padding:5px 16px 5px 0;border-bottom:2px solid #999999;text-align:left"
+
+info_text() {  # INFO-Zeilen "Bezeichner|Wert" als ausgerichteter Text
+  # printf füllt nach Bytes auf; ${#label} zählt unter C.UTF-8 Zeichen, sonst verschieben Umlaute die Spalte
+  local LC_ALL=C.UTF-8 row label
+  for row in "${INFO[@]}"; do
+    label="${row%%|*}:"
+    printf '%s%*s%s\n' "$label" $(( 15 - ${#label} )) "" "${row#*|}"
+  done
+}
+
+info_html() {
+  local row
+  echo "<table cellspacing=\"0\" cellpadding=\"0\" style=\"$FONT;border-collapse:collapse\">"
+  for row in "${INFO[@]}"; do
+    printf '<tr><td style="padding:2px 16px 2px 0;color:#666666">%s</td><td style="padding:2px 0">%s</td></tr>\n' \
+      "$(html_escape <<< "${row%%|*}")" "$(html_escape <<< "${row#*|}")"
+  done
+  echo "</table>"
+}
+
+text_table() {  # stdin: Zeilen mit |-getrennten Spalten, erste Zeile = Kopf
+  awk -F'|' 'NR==1 { print; u=$0; gsub(/[^|]/, "-", u); print u; next } { print }' |
+  awk -F'|' '
+    { for (i=1; i<=NF; i++) { cell[NR,i]=$i; if (length($i) > w[i]) w[i]=length($i) } n=NR; nf=(NF>nf?NF:nf) }
+    END { for (r=1; r<=n; r++) { line=""; for (i=1; i<=nf; i++) line = line sprintf("%-" w[i]+2 "s", cell[r,i]); sub(/ +$/, "", line); print line } }'
+}
+
+html_table() {  # stdin wie text_table, bereits HTML-escaped; Spalten 2 und 3 in Festbreitenschrift
+  echo "<table cellspacing=\"0\" cellpadding=\"0\" style=\"$FONT;border-collapse:collapse\">"
+  awk -F'|' -v cell="$CELL" -v head="$HEAD" -v mono="$MONO" '
+    NR==1 { printf "<tr>"; for (i=1; i<=NF; i++) printf "<th style=\"%s\">%s</th>", head, $i; print "</tr>"; next }
+    { printf "<tr>"
+      for (i=1; i<=NF; i++) printf "<td style=\"%s%s\">%s</td>", cell, (i==2 || i==3 ? ";" mono : ""), $i
+      print "</tr>" }'
+  echo "</table>"
+}
+
+encode_subject() {
+  printf '=?UTF-8?B?%s?=' "$(printf '%s' "$1" | base64 -w0)"
+}
+
+MAIL_FILE=$(mktemp)
+trap 'rm -f "$MAIL_FILE"' EXIT
+
+send_mail() {  # nutzt SUBJECT, BODY, BODY_HTML, TOTAL, SEC_COUNT, optional REPLY_TO; setzt MSG_ID
+  local boundary
+  boundary="=_update-notify_$(date +%s)_$RANDOM"
+  MSG_ID="<update-notify.$(date +%s).$RANDOM@$FQDN>"
+  {
+    echo "From: update-notify $HOST_LABEL <$MAIL_FROM>"
+    echo "To: $MAIL_TO"
+    echo "Subject: $(encode_subject "$SUBJECT")"
+    echo "Date: $(LC_ALL=C date -R)"
+    echo "Message-ID: $MSG_ID"
+    if [[ -n "${REPLY_TO:-}" ]]; then
+      echo "In-Reply-To: $REPLY_TO"
+      echo "References: $REPLY_TO"
+    fi
+    echo "X-Update-Notify-Host: $HOST_LABEL"
+    echo "X-Update-Notify-Count: $TOTAL"
+    echo "X-Update-Notify-Security: $SEC_COUNT"
+    echo "MIME-Version: 1.0"
+    echo "Content-Type: multipart/alternative; boundary=\"$boundary\""
+    echo
+    echo "--$boundary"
+    echo "Content-Type: text/plain; charset=UTF-8"
+    echo "Content-Transfer-Encoding: 8bit"
+    echo
+    echo "$BODY"
+    echo
+    echo "--$boundary"
+    echo "Content-Type: text/html; charset=UTF-8"
+    echo "Content-Transfer-Encoding: 8bit"
+    echo
+    echo "$BODY_HTML"
+    echo
+    echo "--$boundary--"
+  } > "$MAIL_FILE"
+
+  if (( DRY_RUN )); then
+    echo "=== Dry-Run, Betreff: $SUBJECT ==="
+    cat "$MAIL_FILE"
+    return 0
+  fi
+
+  local curl_args=(--silent --show-error --crlf --max-time 60
+                   --mail-from "$MAIL_FROM" --upload-file "$MAIL_FILE")
+  local rcpts r url
+  IFS=',' read -ra rcpts <<< "$MAIL_TO"
+  for r in "${rcpts[@]}"; do
+    curl_args+=(--mail-rcpt "$(echo "$r" | xargs)")
+  done
+
+  case "$SMTP_TLS" in
+    smtps)    url="smtps://$SMTP_HOST:$SMTP_PORT" ;;
+    starttls) url="smtp://$SMTP_HOST:$SMTP_PORT"; curl_args+=(--ssl-reqd) ;;
+    none)     url="smtp://$SMTP_HOST:$SMTP_PORT" ;;
+    *) echo "SMTP_TLS muss none, starttls oder smtps sein" >&2; exit 1 ;;
+  esac
+
+  if [[ -n "$SMTP_USER" ]]; then curl_args+=(--user "$SMTP_USER:$SMTP_PASS"); fi
+
+  curl "${curl_args[@]}" --url "$url"
+}
+
+# --- Keine Updates mehr offen: ggf. Installation melden --------------------------
 if (( ${#UPDATES[@]} == 0 )); then
-  # Keine Updates: Zustand zurücksetzen, damit neue Updates wieder gemeldet werden
-  (( DRY_RUN )) || rm -f "$HASH_FILE"
+  # Nur Pakete mit geänderter Version zählen – zurückgezogene oder gesperrte Updates sind nicht installiert
+  DONE=()
+  if [[ -r "$LIST_FILE" ]]; then
+    while IFS='|' read -r pkg old _; do
+      cur=$(dpkg-query -W -f='${Version}\n' "$pkg" 2>/dev/null | head -n1 || true)
+      if [[ "${cur:--}" != "$old" ]]; then DONE+=("$pkg|$old|${cur:--}"); fi
+    done < "$LIST_FILE"
+  fi
+
+  if (( ${#DONE[@]} )); then
+    TOTAL=0
+    SEC_COUNT=0
+    REPLY_TO=$(cat "$MSGID_FILE" 2>/dev/null || true)
+    SUBJECT="$SUBJECT_PREFIX $HOST_LABEL: Updates installiert"
+    if (( REBOOT_REQUIRED )); then SUBJECT+=" – Neustart ausstehend"; fi
+    INFO=(
+      "Host|$FQDN"
+      "IP|${IPS:--}"
+      "System|$OS_NAME"
+      "Kernel|$KERNEL"
+      "Geprüft am|$NOW"
+      "Installiert|${#DONE[@]} Pakete, keine Updates mehr offen"
+      "Neustart|$( (( REBOOT_REQUIRED )) && echo "ausstehend" || echo "nicht ausstehend")"
+    )
+    BODY=$(cat <<EOF
+Auf $HOST_LABEL wurden die gemeldeten Updates installiert.
+
+$(info_text)
+
+$({ echo "Paket|Vorher|Jetzt"; printf '%s\n' "${DONE[@]}"; } | text_table)
+
+--
+Automatische Meldung von update-notify auf $HOST_LABEL
+EOF
+)
+    BODY_HTML=$(cat <<EOF
+<html><body style="$FONT">
+<p style="font-size:16px"><b>Auf $(html_escape <<< "$HOST_LABEL") wurden die gemeldeten Updates installiert.</b></p>
+$(info_html)
+<p><b>Pakete</b></p>
+$({ echo "Paket|Vorher|Jetzt"; printf '%s\n' "${DONE[@]}"; } | html_escape | html_table)
+<p style="color:#888888;font-size:12px">Automatische Meldung von update-notify auf $(html_escape <<< "$HOST_LABEL")</p>
+</body></html>
+EOF
+)
+    send_mail
+    (( DRY_RUN )) || echo "Gemeldet: $SUBJECT"
+  fi
+
+  # Zustand zurücksetzen, damit neue Updates wieder gemeldet werden
+  (( DRY_RUN )) || rm -f "$HASH_FILE" "$LIST_FILE" "$MSGID_FILE"
   echo "Keine Updates verfügbar."
   exit 0
 fi
@@ -87,13 +260,7 @@ fi
 TOTAL=${#UPDATES[@]}
 SEC_COUNT=$(printf '%s\n' "${UPDATES[@]}" | awk -F'|' '$5=="S"' | wc -l)
 
-OS_NAME=$(. /etc/os-release && echo "${PRETTY_NAME:-unbekannt}")
-KERNEL=$(uname -r)
-# Nur die IP der Schnittstelle mit Default-Route (keine Docker-/Bridge-Adressen)
-IPS=$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{ for (i=1; i<NF; i++) if ($i=="src") { print $(i+1); exit } }' || true)
-[[ -z "$IPS" ]] && IPS=$(hostname -I 2>/dev/null | awk '{print $1}' || true)
 HELD=$(apt-mark showhold 2>/dev/null | xargs || true)
-NOW=$(date '+%d.%m.%Y %H:%M')
 
 PKGS=$(printf '%s\n' "${UPDATES[@]}" | cut -d'|' -f1)
 has_pkg() { grep -Eq "$1" <<< "$PKGS"; }
@@ -129,18 +296,8 @@ elif [[ "$REBOOT_AFTER" == nötig* ]]; then
   SUBJECT+=" – Neustart nötig"
 fi
 
-TABLE=$(
-  {
-    echo "Paket|Installiert|Neu|Sicherheit"
-    echo "-----|-----------|---|----------"
-    printf '%s\n' "${UPDATES[@]}" | awk -F'|' '{ printf "%s|%s|%s|%s\n", $1, $2, $3, ($5=="S" ? "ja" : "") }'
-  } | awk -F'|' '
-      { for (i=1; i<=NF; i++) { cell[NR,i]=$i; if (length($i) > w[i]) w[i]=length($i) } n=NR; nf=(NF>nf?NF:nf) }
-      END { for (r=1; r<=n; r++) { line=""; for (i=1; i<=nf; i++) line = line sprintf("%-" w[i]+2 "s", cell[r,i]); sub(/ +$/, "", line); print line } }'
-)
-
 INFO=(
-  "Host|$(hostname -f 2>/dev/null || hostname)"
+  "Host|$FQDN"
   "IP|${IPS:--}"
   "System|$OS_NAME"
   "Kernel|$KERNEL"
@@ -150,125 +307,46 @@ INFO=(
   "Nach Update|Neustart ${REBOOT_AFTER:-nicht nötig}"
   "Gesperrt|${HELD:-keine}"
 )
-# printf füllt nach Bytes auf; ${#label} zählt unter C.UTF-8 Zeichen, sonst verschieben Umlaute die Spalte
-INFO_TEXT=$(LC_ALL=C.UTF-8; for row in "${INFO[@]}"; do
-  label="${row%%|*}:"
-  printf '%s%*s%s\n' "$label" $(( 15 - ${#label} )) "" "${row#*|}"
-done)
 
 BODY=$(cat <<EOF
 Auf $HOST_LABEL sind Updates verfügbar.
 
-$INFO_TEXT
+$(info_text)
 
 Auswirkungen beim Update:
 $HINTS_TEXT
 
-$TABLE
+$({ echo "Paket|Installiert|Neu|Sicherheit"
+    printf '%s\n' "${UPDATES[@]}" | awk -F'|' '{ printf "%s|%s|%s|%s\n", $1, $2, $3, ($5=="S" ? "ja" : "") }'
+  } | text_table)
 
 --
 Automatische Meldung von update-notify auf $HOST_LABEL
 EOF
 )
 
-# --- HTML-Fassung (Ticketsysteme zeigen Text in Proportionalschrift, dort verrutschen die Spalten) ---
-html_escape() { sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'; }
-
-FONT="font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#222222"
-MONO="font-family:Consolas,Menlo,monospace;font-size:13px"
-CELL="padding:5px 16px 5px 0;border-bottom:1px solid #dddddd;text-align:left;vertical-align:top"
-HEAD="padding:5px 16px 5px 0;border-bottom:2px solid #999999;text-align:left"
-
-INFO_HTML=$(for row in "${INFO[@]}"; do
-  printf '<tr><td style="padding:2px 16px 2px 0;color:#666666">%s</td><td style="padding:2px 0">%s</td></tr>\n' \
-    "$(html_escape <<< "${row%%|*}")" "$(html_escape <<< "${row#*|}")"
-done)
-HINTS_HTML=$(printf '%s\n' "${HINTS[@]}" | html_escape | sed 's|.*|<li>&</li>|')
-TABLE_HTML=$(printf '%s\n' "${UPDATES[@]}" | html_escape | awk -F'|' -v cell="$CELL" -v mono="$MONO" '{
-  sec = ($5=="S") ? "<b style=\"color:#b3261e\">Sicherheit</b>" : ""
-  printf "<tr><td style=\"%s\">%s</td><td style=\"%s;%s\">%s</td><td style=\"%s;%s\">%s</td><td style=\"%s\">%s</td></tr>\n", cell, $1, cell, mono, $2, cell, mono, $3, cell, sec
-}')
-
 BODY_HTML=$(cat <<EOF
 <html><body style="$FONT">
 <p style="font-size:16px"><b>Auf $(html_escape <<< "$HOST_LABEL") sind $TOTAL Updates verfügbar</b>, davon $SEC_COUNT Sicherheitsupdates.</p>
-<table cellspacing="0" cellpadding="0" style="$FONT;border-collapse:collapse">
-$INFO_HTML
-</table>
+$(info_html)
 <p><b>Auswirkungen beim Update</b></p>
 <ul>
-$HINTS_HTML
+$(printf '%s\n' "${HINTS[@]}" | html_escape | sed 's|.*|<li>&</li>|')
 </ul>
 <p><b>Pakete</b></p>
-<table cellspacing="0" cellpadding="0" style="$FONT;border-collapse:collapse">
-<tr><th style="$HEAD">Paket</th><th style="$HEAD">Installiert</th><th style="$HEAD">Neu</th><th style="$HEAD">Art</th></tr>
-$TABLE_HTML
-</table>
+$({ echo "Paket|Installiert|Neu|Art"
+    printf '%s\n' "${UPDATES[@]}" | html_escape |
+      awk -F'|' '{ printf "%s|%s|%s|%s\n", $1, $2, $3, ($5=="S" ? "<b style=\"color:#b3261e\">Sicherheit</b>" : "") }'
+  } | html_table)
 <p style="color:#888888;font-size:12px">Automatische Meldung von update-notify auf $(html_escape <<< "$HOST_LABEL")</p>
 </body></html>
 EOF
 )
 
-encode_subject() {
-  printf '=?UTF-8?B?%s?=' "$(printf '%s' "$1" | base64 -w0)"
-}
-
-BOUNDARY="=_update-notify_$(date +%s)_$RANDOM"
-MAIL_FILE=$(mktemp)
-trap 'rm -f "$MAIL_FILE"' EXIT
-
-{
-  echo "From: update-notify $HOST_LABEL <$MAIL_FROM>"
-  echo "To: $MAIL_TO"
-  echo "Subject: $(encode_subject "$SUBJECT")"
-  echo "Date: $(LC_ALL=C date -R)"
-  echo "Message-ID: <update-notify.$(date +%s).$RANDOM@$(hostname -f 2>/dev/null || hostname)>"
-  echo "X-Update-Notify-Host: $HOST_LABEL"
-  echo "X-Update-Notify-Count: $TOTAL"
-  echo "X-Update-Notify-Security: $SEC_COUNT"
-  echo "MIME-Version: 1.0"
-  echo "Content-Type: multipart/alternative; boundary=\"$BOUNDARY\""
-  echo
-  echo "--$BOUNDARY"
-  echo "Content-Type: text/plain; charset=UTF-8"
-  echo "Content-Transfer-Encoding: 8bit"
-  echo
-  echo "$BODY"
-  echo
-  echo "--$BOUNDARY"
-  echo "Content-Type: text/html; charset=UTF-8"
-  echo "Content-Transfer-Encoding: 8bit"
-  echo
-  echo "$BODY_HTML"
-  echo
-  echo "--$BOUNDARY--"
-} > "$MAIL_FILE"
-
-if (( DRY_RUN )); then
-  echo "=== Dry-Run, Betreff: $SUBJECT ==="
-  cat "$MAIL_FILE"
-  exit 0
-fi
-
-# --- Versand per SMTP ----------------------------------------------------------
-CURL_ARGS=(--silent --show-error --crlf --max-time 60
-           --mail-from "$MAIL_FROM" --upload-file "$MAIL_FILE")
-
-IFS=',' read -ra RCPTS <<< "$MAIL_TO"
-for r in "${RCPTS[@]}"; do
-  CURL_ARGS+=(--mail-rcpt "$(echo "$r" | xargs)")
-done
-
-case "$SMTP_TLS" in
-  smtps)    URL="smtps://$SMTP_HOST:$SMTP_PORT" ;;
-  starttls) URL="smtp://$SMTP_HOST:$SMTP_PORT"; CURL_ARGS+=(--ssl-reqd) ;;
-  none)     URL="smtp://$SMTP_HOST:$SMTP_PORT" ;;
-  *) echo "SMTP_TLS muss none, starttls oder smtps sein" >&2; exit 1 ;;
-esac
-
-[[ -n "$SMTP_USER" ]] && CURL_ARGS+=(--user "$SMTP_USER:$SMTP_PASS")
-
-curl "${CURL_ARGS[@]}" --url "$URL"
+send_mail
+(( DRY_RUN )) && exit 0
 
 echo "$NEW_HASH" > "$HASH_FILE"
+printf '%s\n' "${UPDATES[@]}" > "$LIST_FILE"
+echo "$MSG_ID" > "$MSGID_FILE"
 echo "Gemeldet: $SUBJECT"
