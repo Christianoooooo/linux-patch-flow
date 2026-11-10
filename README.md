@@ -106,6 +106,8 @@ linux-image-amd64                 6.12.113-1                   6.12.116-1       
 ...
 ```
 
+Die Mail wird als `multipart/alternative` verschickt: Neben der Textfassung oben enthält sie eine HTML-Fassung mit echten Tabellen, damit die Spalten auch im Ticketsystem (Proportionalschrift) sauber ausgerichtet sind. Sicherheitsupdates sind dort farblich markiert.
+
 Zusätzlich setzt die Mail die Header `X-Update-Notify-Host`, `X-Update-Notify-Count` und `X-Update-Notify-Security` für Filter im Ticketsystem.
 
 ### Zeitplan ändern
