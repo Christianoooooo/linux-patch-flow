@@ -18,7 +18,7 @@ Ein systemd-Timer prüft werktags um 06:30 (± 30 min), ob APT-Updates anstehen,
 - Erkennt Sicherheitsupdates (Quelle `*-security`)
 - Weist aus, ob nach dem Update ein Neustart nötig ist (Kernel) oder empfohlen wird (libc6, systemd, dbus, OpenSSL)
 - Weist aus, welche Dienste beim Update neu starten (Docker, nginx, Apache, MariaDB/MySQL, PostgreSQL, Elasticsearch, Zammad, OpenSSH)
-- Meldet sich noch einmal, sobald die gemeldeten Updates installiert sind
+- Meldet sich noch einmal, sobald die gemeldeten Updates installiert sind – direkt nach dem APT-Lauf
 
 ### Installation
 
@@ -42,6 +42,7 @@ Der Installer legt ab:
 | `/usr/local/sbin/update-notify.sh` | Skript |
 | `/etc/update-notify.conf` | Konfiguration (nur beim ersten Mal, wird nie überschrieben) |
 | `/etc/systemd/system/update-notify.{service,timer}` | Zeitsteuerung |
+| `/etc/systemd/system/update-notify.path` | startet die Prüfung direkt nach jedem APT-Installationslauf |
 | `/var/lib/update-notify/last.{hash,list,msgid}` | Zustand der letzten Meldung |
 | `/usr/share/bash-completion/completions/update-notify.sh` | Tab-Vervollständigung für die Optionen |
 
@@ -116,7 +117,7 @@ Die Mail wird als `multipart/alternative` verschickt: Neben der Textfassung oben
 
 ### Meldung nach der Installation
 
-Sind beim nächsten Lauf keine Updates mehr offen und haben sich Versionen der gemeldeten Pakete geändert, geht eine zweite Mail raus:
+Sind bei einem Lauf keine Updates mehr offen und haben sich Versionen der gemeldeten Pakete geändert, geht eine zweite Mail raus:
 
 ```
 Betreff: [Linux-Updates] grov81: Updates installiert – Neustart ausstehend
@@ -135,7 +136,9 @@ linux-image-amd64  6.12.113-1  6.12.116-1
 ...
 ```
 
-Die Mail kommt mit dem nächsten Timer-Lauf. Wer sie sofort möchte, ruft nach dem Einspielen `update-notify.sh` von Hand auf. Sie verweist per `In-Reply-To`/`References` auf die ursprüngliche Meldung, damit das Ticketsystem sie demselben Ticket zuordnen kann (in Zammad muss dafür die Follow-up-Erkennung über References aktiv sein).
+Die Mail kommt direkt nach dem Einspielen: `update-notify.path` überwacht `/var/log/apt/history.log` und startet die Prüfung, sobald APT einen Installationslauf abgeschlossen hat (egal ob von Hand oder per `unattended-upgrades`). Die Prüfung läuft damit nach jedem APT-Installationslauf; eine Mail gibt es wie immer nur, wenn sich etwas geändert hat. Abschalten: `systemctl disable --now update-notify.path`.
+
+Sie verweist per `In-Reply-To`/`References` auf die ursprüngliche Meldung, damit das Ticketsystem sie demselben Ticket zuordnen kann (in Zammad muss dafür die Follow-up-Erkennung über References aktiv sein).
 
 Zusätzlich setzen beide Mails die Header `X-Update-Notify-Host`, `X-Update-Notify-Count` und `X-Update-Notify-Security` für Filter im Ticketsystem (bei der Installationsmeldung jeweils `0`).
 
