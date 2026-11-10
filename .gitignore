@@ -1,0 +1,3 @@
+# Echte Konfiguration mit SMTP-Daten nie einchecken
+update-notify.conf
+*.local

@@ -1,0 +1,10 @@
+[Unit]
+Description=Täglich auf APT-Updates prüfen
+
+[Timer]
+OnCalendar=Mon..Fri 06:30
+RandomizedDelaySec=30min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

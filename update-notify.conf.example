@@ -1,0 +1,21 @@
+# /etc/update-notify.conf  (chmod 600, da ggf. SMTP-Passwort enthalten)
+# Vorlage – beim Installieren nach /etc/update-notify.conf kopiert, falls noch keine existiert
+
+# SMTP-Server bzw. Relay, über den die Meldung an Zammad geht
+SMTP_HOST="smtp.example.com"
+SMTP_PORT=25
+SMTP_TLS="starttls"        # none | starttls | smtps
+
+# Nur ausfüllen, wenn der Server Authentifizierung verlangt
+SMTP_USER=""
+SMTP_PASS=""
+
+# Absender und Empfänger (Empfänger = Postfach, das Zammad abruft; mehrere mit Komma)
+MAIL_FROM="update-notify@example.com"
+MAIL_TO="helpdesk@example.com"
+
+# Betreff-Präfix, später für Zammad-Trigger/Filter nutzbar
+SUBJECT_PREFIX="[Linux-Updates]"
+
+# Anzeigename des Servers in der Meldung (Standard: hostname -s)
+#HOST_LABEL="GROV84"

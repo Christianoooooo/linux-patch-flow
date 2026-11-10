@@ -1,0 +1,10 @@
+[Unit]
+Description=Verfügbare APT-Updates an Zammad melden
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/update-notify.sh
+Nice=10
+IOSchedulingClass=idle
