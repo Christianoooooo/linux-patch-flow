@@ -16,6 +16,7 @@ STATE_DIR="/var/lib/update-notify"
 HASH_FILE="$STATE_DIR/last.hash"
 LIST_FILE="$STATE_DIR/last.list"
 MSGID_FILE="$STATE_DIR/last.msgid"
+COMMIT_FILE="$STATE_DIR/installed.commit"
 REPO="Christianoooooo/linux-patch-flow"
 RAW_BASE="https://raw.githubusercontent.com/$REPO"
 SELF=$(readlink -f "${BASH_SOURCE[0]}")
@@ -52,10 +53,15 @@ show_version() {
 
 self_update() {
   [[ $EUID -eq 0 ]] || { echo "Bitte als root ausführen" >&2; exit 1; }
-  local dir rc=0
+  local dir ref rc=0
+  ref=$(remote_ref)
+  if [[ "$ref" != main && "$ref" == "$(cat "$COMMIT_FILE" 2>/dev/null || true)" ]]; then
+    echo "Bereits aktuell (Commit ${ref:0:7})."
+    exit 0
+  fi
   # Eigenes leeres Verzeichnis, damit der Installer kein lokales Repo neben sich vermutet
   dir=$(mktemp -d)
-  if curl -fsSL --max-time 30 "$RAW_BASE/$(remote_ref)/install.sh" -o "$dir/install.sh"; then
+  if curl -fsSL --max-time 30 "$RAW_BASE/$ref/install.sh" -o "$dir/install.sh"; then
     bash "$dir/install.sh" || rc=$?
   else
     echo "Download des Installers fehlgeschlagen" >&2

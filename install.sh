@@ -89,6 +89,14 @@ else
   NEW_CONF=1
 fi
 
+# Installierten Commit merken, damit --update erkennt, ob es etwas zu tun gibt
+install -d -m 700 /var/lib/update-notify
+if [[ "${sha:-}" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "$sha" > /var/lib/update-notify/installed.commit
+else
+  rm -f /var/lib/update-notify/installed.commit
+fi
+
 systemctl daemon-reload
 systemctl enable --now update-notify.timer update-notify.path
 
