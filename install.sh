@@ -23,6 +23,11 @@ if ! command -v curl >/dev/null; then
   apt-get install -y -qq curl
 fi
 
+if [[ ! -f /usr/share/bash-completion/bash_completion ]]; then
+  echo "Installiere bash-completion ..."
+  apt-get install -y -qq bash-completion
+fi
+
 # Quelle: lokales Repo (wenn install.sh daneben liegt) oder GitHub
 SRC_DIR=""
 if [[ -n "${BASH_SOURCE[0]:-}" && -f "${BASH_SOURCE[0]}" ]]; then

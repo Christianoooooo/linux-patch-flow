@@ -12,7 +12,7 @@ Patch-Management für Debian-Server über das Ticketsystem: Verfügbare Updates 
 
 Ein systemd-Timer prüft werktags um 06:30 (± 30 min), ob APT-Updates anstehen, und schickt eine Mail per SMTP, zum Beispiel an das Postfach des Ticketsystems.
 
-- Reines Bash, benötigt nur `curl` (installiert der Installer bei Bedarf)
+- Reines Bash, benötigt nur `curl` (installiert der Installer bei Bedarf, ebenso `bash-completion` für die Tab-Vervollständigung)
 - Installiert nichts: die Prüfung läuft per `apt-get -s dist-upgrade` (Simulation)
 - Meldet nur, wenn sich die Liste der Updates seit der letzten Meldung **geändert** hat, also kein tägliches Ticket mit demselben Inhalt
 - Erkennt Sicherheitsupdates (Quelle `*-security`)
@@ -69,7 +69,7 @@ update-notify.sh             # normaler Lauf (wie der Timer)
 journalctl -u update-notify  # Protokoll
 ```
 
-Die Optionen lassen sich mit Tab vervollständigen, wenn das Paket `bash-completion` installiert ist (`apt install bash-completion`, danach neu anmelden).
+Die Optionen lassen sich mit Tab vervollständigen. Hat der Installer `bash-completion` gerade erst installiert, wirkt das nach einer neuen Anmeldung.
 
 ### Wann wird gemeldet?
 
